@@ -122,7 +122,7 @@
             @click="openEditDevice(dev)"
           >
             <div class="card-title">{{ dev.name }}</div>
-            <div class="card-desc">{{ dev.greenhouse }} · {{ dev.variety }}</div>
+            <div class="card-desc">{{ dev.plotName }} · {{ dev.grapeType }}</div>
           </div>
           <div v-if="deviceList.length === 0" class="empty-card-tip">
             当前暂无监测设备，请点击右侧新增按钮新增设备
@@ -130,11 +130,7 @@
         </div>
       </div>
 
-      <!-- 独立增删按钮，与箭头解耦 -->
-      <div class="device-op-btn">
-        <el-button type="success" size="small" @click="addNewDevice">新增设备</el-button>
-        <el-button type="danger" size="small" :disabled="!selectDeviceId" @click="deleteCurrentDevice">删除选中</el-button>
-      </div>
+      <!-- 设备管理请在「设备管理」页面操作 -->
     </div>
 
     <!-- 编辑设备弹窗 -->
@@ -144,10 +140,10 @@
           <el-input v-model="editDevForm.name" placeholder="葡萄检测器3号" />
         </el-form-item>
         <el-form-item label="大棚位置">
-          <el-input v-model="editDevForm.greenhouse" placeholder="新大棚 / 东区5号大棚" />
+          <el-input v-model="editDevForm.plotName" placeholder="新大棚 / 东区5号大棚" />
         </el-form-item>
         <el-form-item label="葡萄品种">
-          <el-input v-model="editDevForm.variety" placeholder="阳光玫瑰 / 巨峰" />
+          <el-input v-model="editDevForm.grapeType" placeholder="阳光玫瑰 / 巨峰" />
         </el-form-item>
         <el-form-item label="最佳采收甜度">
           <el-input-number v-model="editDevForm.standardSugar" :min="10" :max="25" />
@@ -208,7 +204,7 @@
                 <el-option
                   v-for="dev in deviceList"
                   :key="dev.id"
-                  :label="`${dev.name}（${dev.greenhouse} · ${dev.variety}）`"
+                  :label="`${dev.name}（${dev.plotName} · ${dev.grapeType}）`"
                   :value="dev.id"
                 />
               </el-select>
@@ -273,6 +269,7 @@
 
 <script setup>
 import { useUserStore } from '@/stores/userStore'
+import { useDeviceStore } from '@/stores/deviceStore'
 import { ref, onMounted, watch, onBeforeUnmount, onActivated, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight, CircleCheck, Bell, Warning } from '@element-plus/icons-vue'
@@ -285,6 +282,7 @@ import { grapeRegionTree } from '@/utils/regionData'
 
 const router = useRouter()
 const userStore = useUserStore()
+const deviceStore = useDeviceStore()
 const chartRef = ref(null)
 const sliderViewportRef = ref(null)
 let chartInstance = null
@@ -338,9 +336,9 @@ const editDevDialogVisible = ref(false)
 const editDevForm = ref({})
 let editingDevId = ref(null)
 
-// ============ 响应式设备、甜度模板 ============
-const deviceList = ref([])
-const deviceSugarTemplate = ref({})
+// ============ 响应式设备、甜度模板（使用共享Store） ============
+const deviceList = computed(() => deviceStore.deviceList)
+const deviceSugarTemplate = computed(() => deviceStore.sugarTemplate)
 
 const currentIndex = computed(() => {
   return deviceList.value.findIndex(item => item.id === selectDeviceId.value)
@@ -354,15 +352,9 @@ const varietySugarRange = {
   '未知品种': { min:12, max:19, standard:15 }
 }
 
-// ============ localStorage 按账号key隔离存储 ============
-function getStorageKey(type) {
-  const phone = userStore.username || 'temp'
-  return `farm_${phone}_${type}`
-}
-
+// ============ localStorage 按账号key隔离存储（由deviceStore统一管理） ============
 function saveDeviceStorage() {
-  localStorage.setItem(getStorageKey('deviceList'), JSON.stringify(deviceList.value))
-  localStorage.setItem(getStorageKey('sugarTpl'), JSON.stringify(deviceSugarTemplate.value))
+  deviceStore.saveToStorage()
 }
 
 const onCitySearch = (keyword) => {
@@ -451,16 +443,16 @@ const fetchWeatherAndPredict = async () => {
     if (seq !== predictSeq) return
     const dailyTemps = forecast.map(d => d.tempAvg)
 
-    const variety = dev.variety === '巨峰' ? 'jf'
-      : dev.variety === '夏黑' ? 'xh'
-      : dev.variety === '蓝宝石' ? 'lbs'
+    const variety = dev.grapeType === '巨峰' ? 'jf'
+      : dev.grapeType === '夏黑' ? 'xh'
+      : dev.grapeType === '蓝宝石' ? 'lbs'
       : 'ygmg'
 
     const trend = predictSugarTrend(dailyTemps, dev.baseTemp ?? 2000, variety, dev.baseSugar)
     const sugarValues = trend.map(t => t.sugar)
 
     if (!deviceSugarTemplate.value[dev.id]) {
-      deviceSugarTemplate.value[dev.id] = { name: dev.variety, standardSugar: 18 }
+      deviceSugarTemplate.value[dev.id] = { name: dev.grapeType, standardSugar: 18 }
     }
     deviceSugarTemplate.value[dev.id]['7day'] = sugarValues.slice(0, 7)
     deviceSugarTemplate.value[dev.id]['14day'] = sugarValues
@@ -486,33 +478,19 @@ function generateMockDataForCurrentDevice() {
   const dev = currentDevice.value
   if (!dev) return
   if (!deviceSugarTemplate.value[dev.id]) {
-    deviceSugarTemplate.value[dev.id] = { name: dev.variety, standardSugar: 18 }
+    deviceSugarTemplate.value[dev.id] = { name: dev.grapeType, standardSugar: 18 }
   }
-  const tpl = createNewSugarTpl(dev.variety)
+  const tpl = createNewSugarTpl(dev.grapeType)
   deviceSugarTemplate.value[dev.id]['7day'] = tpl['7day']
   deviceSugarTemplate.value[dev.id]['14day'] = tpl['14day']
   saveDeviceStorage()
   renderChart()
 }
 
-// ============ 设备存储读写 ============
+// ============ 设备存储读写（使用共享Store） ============
 function loadDeviceStorage() {
-  const devStr = localStorage.getItem(getStorageKey('deviceList'))
-  const tplStr = localStorage.getItem(getStorageKey('sugarTpl'))
-  if (devStr) deviceList.value = JSON.parse(devStr)
-  if (tplStr) deviceSugarTemplate.value = JSON.parse(tplStr)
+  deviceStore.loadFromStorage()
 
-  // 迁移旧数据：为没有产地/积温/糖度字段的设备补充默认值
-  deviceList.value.forEach(d => {
-    if (d.searchedCityId === undefined) d.searchedCityId = ''
-    if (d.currentRegionName === undefined) d.currentRegionName = ''
-    if (d.baseTemp === undefined) d.baseTemp = 2000
-    if (d.baseSugar === undefined) d.baseSugar = null
-  })
-
-  if (deviceList.value.length === 0) {
-    initDefaultDevice()
-  }
   if (deviceList.value.length > 0) {
     const exist = deviceList.value.some(d => d.id === selectDeviceId.value)
     if (!exist) {
@@ -520,47 +498,6 @@ function loadDeviceStorage() {
     }
   } else {
     selectDeviceId.value = ''
-  }
-}
-
-function initDefaultDevice() {
-  const d1 = {
-    id: '1',
-    name: '葡萄检测器一号',
-    greenhouse: '东区5号大棚',
-    variety: '阳光玫瑰',
-    searchedCityId: '',
-    currentRegionName: '',
-    baseTemp: 2000,
-    baseSugar: null
-  }
-  const d5 = {
-    id: '5',
-    name: '葡萄检测器五号',
-    greenhouse: '西区2号大棚',
-    variety: '巨峰',
-    searchedCityId: '',
-    currentRegionName: '',
-    baseTemp: 2000,
-    baseSugar: null
-  }
-  deviceList.value = [d1, d5]
-  deviceSugarTemplate.value['1'] = generateDefaultSugarData('ygmg', d1.baseTemp, d1.baseSugar)
-  deviceSugarTemplate.value['5'] = generateDefaultSugarData('jf', d5.baseTemp, d5.baseSugar)
-  selectDeviceId.value = d1.id
-  saveDeviceStorage()
-}
-
-function generateDefaultSugarData(variety, baseTempVal, baseSugarVal) {
-  const mockTemps7 = [28, 29, 27, 30, 28, 26, 29]
-  const mockTemps14 = [28, 29, 27, 30, 28, 26, 29, 27, 28, 30, 29, 27, 26, 28]
-  const trend7 = predictSugarTrend(mockTemps7, baseTempVal, variety, baseSugarVal)
-  const trend14 = predictSugarTrend(mockTemps14, baseTempVal, variety, baseSugarVal)
-  return {
-    name: variety === 'ygmg' ? '阳光玫瑰' : '巨峰',
-    standardSugar: variety === 'ygmg' ? 18 : 16,
-    '7day': trend7.map(t => t.sugar),
-    '14day': trend14.map(t => t.sugar)
   }
 }
 
@@ -600,24 +537,22 @@ const openEditDevice = (dev) => {
   const tpl = deviceSugarTemplate.value[dev.id]
   editDevForm.value = {
     name: dev.name,
-    greenhouse: dev.greenhouse,
-    variety: dev.variety,
+    plotName: dev.plotName,
+    grapeType: dev.grapeType,
     standardSugar: tpl?.standardSugar || 15
   }
   editDevDialogVisible.value = true
 }
 
 const saveEditDevice = () => {
-  const devItem = deviceList.value.find(i => i.id === editingDevId.value)
-  if (devItem) {
-    devItem.name = editDevForm.value.name
-    devItem.greenhouse = editDevForm.value.greenhouse
-    devItem.variety = editDevForm.value.variety
-  }
+  deviceStore.updateDevice(editingDevId.value, {
+    name: editDevForm.value.name,
+    plotName: editDevForm.value.plotName,
+    grapeType: editDevForm.value.grapeType
+  })
   if (deviceSugarTemplate.value[editingDevId.value]) {
-    deviceSugarTemplate.value[editingDevId.value].standardSugar = editDevForm.value.standardSugar
+    deviceStore.updateStandardSugar(editingDevId.value, editDevForm.value.standardSugar)
   }
-  saveDeviceStorage()
   editDevDialogVisible.value = false
   renderChart()
   ElMessage.success('设备信息修改完成')
@@ -640,49 +575,6 @@ const nextDevice = () => {
     userInfo.value.deviceId = selectDeviceId.value
   }
   setTimeout(scrollActiveToCenter,50)
-}
-
-// ============ 独立新增/删除设备 ============
-const addNewDevice = async () => {
-  const newId = Date.now().toString()
-  const newDev = {
-    id: newId,
-    name: `葡萄检测器${deviceList.value.length + 1}号`,
-    greenhouse: '新大棚',
-    variety: '未知品种',
-    searchedCityId: '',
-    currentRegionName: '',
-    baseTemp: 2000,
-    baseSugar: null
-  }
-  deviceList.value.push(newDev)
-  deviceSugarTemplate.value[newId] = createNewSugarTpl(newDev.variety)
-  selectDeviceId.value = newId
-  userInfo.value.deviceId = selectDeviceId.value
-  saveDeviceStorage()
-  ElMessage.success('新监测设备添加成功，已自动生成甜度预测数据')
-  setTimeout(scrollActiveToCenter,80)
-  renderChart()
-}
-
-const deleteCurrentDevice = async () => {
-  if(!selectDeviceId.value) return
-  await ElMessageBox.confirm('确认删除该设备？对应甜度预测数据会同步清除！','删除确认',{type:'warning'})
-  const delIdx = currentIndex.value
-  const delId = selectDeviceId.value
-  deviceList.value.splice(delIdx,1)
-  delete deviceSugarTemplate.value[delId]
-  if(deviceList.value.length>0){
-    const newSelectIdx = Math.max(0,delIdx-1)
-    selectDeviceId.value = deviceList.value[newSelectIdx].id
-  }else{
-    selectDeviceId.value = ''
-  }
-  userInfo.value.deviceId = selectDeviceId.value
-  saveDeviceStorage()
-  ElMessage.success('设备删除完成')
-  setTimeout(scrollActiveToCenter,50)
-  renderChart()
 }
 
 // ============ 图表渲染 ============
@@ -777,7 +669,7 @@ const renderChart = () => {
   const STANDARD_SUGAR = getCurrentStandard()
 
   const sugarMax = Math.max(...currentData.sugarData)
-  const yAxisMax = Math.ceil((sugarMax > 22 ? sugarMax : 22) / 2) * 2
+  const yAxisMax = Math.ceil(Math.max(sugarMax + 2, STANDARD_SUGAR))
 
   const option = {
     backgroundColor: '#0f172a',
@@ -819,7 +711,7 @@ const renderChart = () => {
       splitLine: { lineStyle: { color: '#222' } },
       axisLine: { lineStyle: { color: '#444' } },
       axisLabel: { color: '#ccc' },
-      min: 0,
+      min: 10,
       max: yAxisMax
     },
     series: [
@@ -937,13 +829,15 @@ const logout = async () => {
     type: 'warning'
   })
   const currentPhone = userStore.username
-  localStorage.removeItem(getStorageKey('deviceList'))
-  localStorage.removeItem(getStorageKey('sugarTpl'))
+  const keys = deviceStore.getStorageKey()
+  localStorage.removeItem(keys.deviceList)
+  localStorage.removeItem(keys.sugarTpl)
   localStorage.removeItem('farmInfo_' + currentPhone)
   userStore.logout()
   userDrawerOpen.value = false
-  deviceList.value = []
-  deviceSugarTemplate.value = {}
+  deviceStore.deviceList = []
+  deviceStore.sugarTemplate = {}
+  deviceStore.saveToStorage()
   selectDeviceId.value = ''
   ElMessage.success('账号已退出，请重新登录')
   router.push('/intro')

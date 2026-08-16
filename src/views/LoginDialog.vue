@@ -70,7 +70,7 @@
 /* eslint-disable no-undef */
 import { ref, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { useUserStore } from '@/stores/user'
+import { useUserStore } from '@/stores/userStore'
 
 const userStore = useUserStore()
 

@@ -28,7 +28,7 @@
       v-loading="tableLoading"
       element-loading-text="正在拉取设备状态..."
     >
-      <el-table-column label="设备编号" prop="deviceId" width="140"></el-table-column>
+      <el-table-column label="设备编号" prop="id" width="140"></el-table-column>
       <el-table-column label="设备序列号(SN)" prop="sn" width="160"></el-table-column>
       <el-table-column label="地块名称" prop="plotName"></el-table-column>
       <el-table-column label="葡萄品种" prop="grapeType"></el-table-column>
@@ -94,7 +94,7 @@
     <!-- 设备详情弹窗 -->
     <el-dialog v-model="detailDialogOpen" title="设备详细信息" width="440px">
       <el-descriptions :column="1" border v-if="currentDetail">
-        <el-descriptions-item label="设备编号">{{ currentDetail.deviceId }}</el-descriptions-item>
+        <el-descriptions-item label="设备编号">{{ currentDetail.id }}</el-descriptions-item>
         <el-descriptions-item label="序列号(SN)">{{ currentDetail.sn }}</el-descriptions-item>
         <el-descriptions-item label="地块名称">{{ currentDetail.plotName }}</el-descriptions-item>
         <el-descriptions-item label="葡萄品种">{{ currentDetail.grapeType }}</el-descriptions-item>
@@ -124,12 +124,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onActivated } from 'vue'
+import { ref, onMounted, onActivated, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
+import { useDeviceStore } from '@/stores/deviceStore'
 
 // 路由跳转实例
 const router = useRouter()
+const deviceStore = useDeviceStore()
 
 // ============已修改：跳转 HomeIntro.vue（介绍首页 name=Intro）============
 const goHome = () => {
@@ -154,78 +156,18 @@ const bindForm = ref({
 // 详情数据
 const currentDetail = ref(null)
 
-// 默认设备模板（仅首次注册用户初始化使用）
-const defaultDeviceList = [
-  {
-    deviceId: '1',
-    sn: 'SN-20230901-001',
-    plotName: '东区一号果园',
-    grapeType: '阳光玫瑰',
-    online: true,
-    power: 68
-  },
-  {
-    deviceId: '2',
-    sn: 'SN-20230901-002',
-    plotName: '西区二号地块',
-    grapeType: '巨峰',
-    online: false,
-    power: 12
-  }
-]
-
-// 设备列表数据
-const deviceList = ref([])
-
-// 获取当前登录用户ID
-const getUserId = () => {
-  return localStorage.getItem('userId')
-}
-// 每个用户独立存储key
-const getStorageKey = () => {
-  const uid = getUserId()
-  return `deviceListData_${uid}`
-}
+// 设备列表数据（使用共享Store）
+const deviceList = computed(() => deviceStore.deviceList)
 
 // 加载当前用户设备数据【核心方法】
 const loadUserData = async () => {
   tableLoading.value = true
-  // 修复：未登录没有userId，直接清空列表，禁止共用visitor数据
-  const uid = getUserId()
-  if (!uid) {
-    deviceList.value = []
-    tableLoading.value = false
-    return
-  }
-
-  const storageKey = getStorageKey()
-  const localDevices = localStorage.getItem(storageKey)
-  if (localDevices) {
-    try {
-      deviceList.value = JSON.parse(localDevices)
-    } catch (e) {
-      // 数据损坏，初始化默认数据
-      deviceList.value = [...defaultDeviceList]
-      saveToLocalStorage()
-    }
-  } else {
-    // 当前用户第一次进入，加载默认模板
-    deviceList.value = [...defaultDeviceList]
-    saveToLocalStorage()
-  }
+  deviceStore.loadFromStorage()
   tableLoading.value = false
-}
-
-// 保存到当前用户独立本地存储
-const saveToLocalStorage = () => {
-  const storageKey = getStorageKey()
-  localStorage.setItem(storageKey, JSON.stringify(deviceList.value))
 }
 
 // KeepAlive缓存页面每次激活执行（切换账号、切页面强制重载数据）
 onActivated(() => {
-  // 先清空旧数据，防止短暂闪现上一用户数据
-  deviceList.value = []
   loadUserData()
 })
 
@@ -268,15 +210,19 @@ const submitBindDevice = async () => {
     }
 
     const newDevice = {
-      deviceId: Date.now(),
+      id: Date.now().toString(),
+      name: `葡萄检测器${data.plotName}`,
       sn: data.sn,
       plotName: data.plotName,
       grapeType: data.grapeType,
       online: true,
-      power: 100
+      power: 100,
+      searchedCityId: '',
+      currentRegionName: '',
+      baseTemp: 2000,
+      baseSugar: null
     }
-    deviceList.value.push(newDevice)
-    saveToLocalStorage()
+    deviceStore.addDevice(newDevice)
     bindDialogOpen.value = false
     ElMessage.success('设备绑定成功！可在首页切换查看')
   } catch (error) {
@@ -303,8 +249,7 @@ const unBindDevice = (row) => {
       type: 'warning'
     }
   ).then(() => {
-    deviceList.value = deviceList.value.filter(item => item.deviceId !== row.deviceId)
-    saveToLocalStorage()
+    deviceStore.deleteDevice(row.id)
     ElMessage.success(`设备已解绑`)
   }).catch(() => {})
 }
@@ -316,13 +261,13 @@ const refreshDeviceStatus = async () => {
 
   await new Promise(resolve => setTimeout(resolve, 800))
 
-  deviceList.value.forEach(item => {
+  deviceStore.deviceList.forEach(item => {
     item.online = Math.random() > 0.15
     if (item.online) {
       item.power = Math.max(1, item.power - Math.floor(Math.random() * 5) + 1)
     }
   })
-  saveToLocalStorage()
+  deviceStore.saveToStorage()
 
   refreshLoading.value = false
   tableLoading.value = false
